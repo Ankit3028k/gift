@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Upload, X, Wand2, Image as ImageIcon, Loader } from 'lucide-react';
+import { api, ArtworkPayload } from '../api/client';
 
 interface PhotoUploadProps {
   onArtworkCreated: (artwork: any) => void;
@@ -45,26 +46,23 @@ export default function PhotoUpload({ onArtworkCreated, onNavigate }: PhotoUploa
 
   const handleGenerate = async () => {
     if (!selectedFile || !title.trim()) return;
-
     setIsProcessing(true);
-
-    setTimeout(() => {
-      const mockArtwork = {
-        id: Date.now().toString(),
-        user_id: 'demo-user',
+    try {
+      // For now, store the preview as original_photo_url; in a real app you'd upload the file and use the returned URL
+      const payload: ArtworkPayload = {
+        title,
         original_photo_url: previewUrl,
-        ai_artwork_url: previewUrl,
-        title: title,
-        created_at: new Date().toISOString(),
-        qr_code_url: '',
+        image_url: previewUrl,
         has_hidden_content: false,
-        art_style: artStyle
       };
-
-      onArtworkCreated(mockArtwork);
-      setIsProcessing(false);
+      const created = await api.createArtwork(payload);
+      onArtworkCreated(created);
       onNavigate('artwork-detail');
-    }, 2000);
+    } catch (e) {
+      console.error('Failed to create artwork', e);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
