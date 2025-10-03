@@ -1,7 +1,10 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
 const path = require('path');
+const mongoose = require('mongoose');
+const dotenv = require('dotenv');
+
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -12,75 +15,85 @@ app.use(express.json());
 // Static hosting for videos and AR marker descriptor files
 app.use('/public', express.static(path.join(__dirname, '..', 'public')));
 
-const dataDir = path.join(__dirname, 'data');
-const dataFile = path.join(dataDir, 'artworks.json');
+// Mongoose models
+const ArtworkSchema = new mongoose.Schema(
+  {
+    title: { type: String, required: true },
+    image_url: String,
+    original_photo_url: String,
+    has_hidden_content: { type: Boolean, default: false },
+    hidden_content: {
+      type: { type: String, enum: ['message', 'video'], default: 'video' },
+      message: String,
+      video_name: String,
+    },
+    ar_content: String, // video url under /public/videos/...
+    marker_descriptor_base: String, // e.g. /public/markers/my-marker
+  },
+  { timestamps: true }
+);
 
-function ensureData() {
-  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-  if (!fs.existsSync(dataFile)) fs.writeFileSync(dataFile, JSON.stringify({ artworks: [] }, null, 2));
-}
+const Artwork = mongoose.model('Artwork', ArtworkSchema);
 
-ensureData();
-
-function readData() {
-  return JSON.parse(fs.readFileSync(dataFile, 'utf-8'));
-}
-
-function writeData(json) {
-  fs.writeFileSync(dataFile, JSON.stringify(json, null, 2));
-}
-
-app.get('/api/health', (_, res) => res.json({ ok: true }));
-
-app.get('/api/artworks', (req, res) => {
-  const db = readData();
-  res.json(db.artworks);
+app.get('/api/health', async (_, res) => {
+  const state = mongoose.connection.readyState; // 0=disconnected,1=connected,2=connecting,3=disconnecting
+  res.json({ ok: true, db: state });
 });
 
-app.get('/api/artworks/:id', (req, res) => {
-  const db = readData();
-  const item = db.artworks.find(a => String(a.id) === String(req.params.id));
-  if (!item) return res.status(404).json({ error: 'Not found' });
-  res.json(item);
+// CRUD
+app.get('/api/artworks', async (req, res) => {
+  const list = await Artwork.find().lean();
+  res.json(list);
 });
 
-app.post('/api/artworks', (req, res) => {
-  const db = readData();
-  const payload = req.body || {};
-  if (!payload.title) return res.status(400).json({ error: 'title required' });
-  const id = payload.id || Date.now();
-  const record = {
-    id,
-    title: payload.title,
-    image_url: payload.image_url || '',
-    original_photo_url: payload.original_photo_url || '',
-    has_hidden_content: !!payload.has_hidden_content,
-    hidden_content: payload.hidden_content || null,
-    ar_content: payload.ar_content || '', // video url under /public/videos/...
-    marker_descriptor_base: payload.marker_descriptor_base || '', // e.g. /public/markers/my-marker
-  };
-  db.artworks.push(record);
-  writeData(db);
-  res.status(201).json(record);
+app.get('/api/artworks/:id', async (req, res) => {
+  const doc = await Artwork.findById(req.params.id).lean();
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  res.json(doc);
 });
 
-app.put('/api/artworks/:id', (req, res) => {
-  const db = readData();
-  const idx = db.artworks.findIndex(a => String(a.id) === String(req.params.id));
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  db.artworks[idx] = { ...db.artworks[idx], ...req.body, id: db.artworks[idx].id };
-  writeData(db);
-  res.json(db.artworks[idx]);
+app.post('/api/artworks', async (req, res) => {
+  try {
+    const payload = req.body || {};
+    if (!payload.title) return res.status(400).json({ error: 'title required' });
+    const created = await Artwork.create(payload);
+    res.status(201).json(created);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
-app.delete('/api/artworks/:id', (req, res) => {
-  const db = readData();
-  const next = db.artworks.filter(a => String(a.id) !== String(req.params.id));
-  if (next.length === db.artworks.length) return res.status(404).json({ error: 'Not found' });
-  writeData({ artworks: next });
+app.put('/api/artworks/:id', async (req, res) => {
+  try {
+    const updated = await Artwork.findByIdAndUpdate(
+      req.params.id,
+      { $set: req.body },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ error: 'Not found' });
+    res.json(updated);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/artworks/:id', async (req, res) => {
+  const result = await Artwork.findByIdAndDelete(req.params.id);
+  if (!result) return res.status(404).json({ error: 'Not found' });
   res.status(204).end();
 });
+ 
+async function start() {
+  try {
+    const uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/gift';
+    await mongoose.connect(uri, { autoIndex: true });
+    app.listen(PORT, () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  } catch (e) {
+    console.error('Failed to start server:', e);
+    process.exit(1);
+  }
+}
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+start();

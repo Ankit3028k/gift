@@ -10,6 +10,7 @@ export interface ARViewerProps {
 export default function ARViewer({ imageUrl, videoUrl, onClose }: ARViewerProps) {
   const sceneRef = useRef<HTMLDivElement>(null);
   const videoElRef = useRef<HTMLVideoElement | null>(null);
+  const tapToStartBtnRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!sceneRef.current) return;
@@ -72,11 +73,16 @@ export default function ARViewer({ imageUrl, videoUrl, onClose }: ARViewerProps)
     videoEntity.setAttribute('visible', 'false');
 
     // Marker visibility events: play when found, pause & hide when lost
-    const onMarkerFound = () => {
-      try {
-        video.play().catch(() => {/* ignore autoplay blocking if any */});
-      } catch {}
+    const onMarkerFound = async () => {
       videoEntity.setAttribute('visible', 'true');
+      try {
+        await video.play();
+      } catch (e) {
+        // Show tap-to-start overlay if autoplay is blocked
+        if (tapToStartBtnRef.current) {
+          tapToStartBtnRef.current.style.display = 'flex';
+        }
+      }
     };
     const onMarkerLost = () => {
       try {
@@ -84,6 +90,9 @@ export default function ARViewer({ imageUrl, videoUrl, onClose }: ARViewerProps)
         video.currentTime = 0;
       } catch {}
       videoEntity.setAttribute('visible', 'false');
+      if (tapToStartBtnRef.current) {
+        tapToStartBtnRef.current.style.display = 'none';
+      }
     };
     imageTarget.addEventListener('markerFound', onMarkerFound);
     imageTarget.addEventListener('markerLost', onMarkerLost);
@@ -105,8 +114,34 @@ export default function ARViewer({ imageUrl, videoUrl, onClose }: ARViewerProps)
     // Add scene to DOM
     sceneRef.current.appendChild(scene);
 
+    // Add tap-to-start overlay button
+    const btn = document.createElement('button');
+    btn.textContent = 'Tap to start video';
+    btn.style.position = 'absolute';
+    btn.style.bottom = '20px';
+    btn.style.left = '50%';
+    btn.style.transform = 'translateX(-50%)';
+    btn.style.padding = '10px 16px';
+    btn.style.borderRadius = '8px';
+    btn.style.background = 'rgba(0,0,0,0.6)';
+    btn.style.color = '#fff';
+    btn.style.display = 'none';
+    btn.style.zIndex = '20';
+    btn.onclick = async () => {
+      try {
+        await video.play();
+        btn.style.display = 'none';
+      } catch {}
+    };
+    tapToStartBtnRef.current = btn as HTMLButtonElement;
+    sceneRef.current.appendChild(btn);
+
     // Clean up
     return () => {
+      try {
+        imageTarget.removeEventListener('markerFound', onMarkerFound);
+        imageTarget.removeEventListener('markerLost', onMarkerLost);
+      } catch {}
       try {
         video.pause();
         video.src = '';
